@@ -48,7 +48,7 @@ document.body.appendChild(renderer.domElement);
 // 加载模型
 let arObject;
 const loader = new THREE.GLTFLoader();
-loader.load('https://你的模型地址.glb', (gltf) => {
+loader.load('cup.glb', (gltf) => {
     arObject = gltf.scene;
     arObject.scale.set(0.5, 0.5, 0.5);
     scene.add(arObject);
