@@ -1,41 +1,124 @@
-
 <!DOCTYPE html>
 <html>
-    <head>
-        <title>AR名片</title>
-        <meta charset="UTF-8">
-        <style>
-            body {
-                margin: 0;
-            }
-        </style>
-    </head>
+<head>
+    <title>AR名片</title>
+    <meta charset="UTF-8">
+    <style>
+        body { 
+            margin: 0;
+            overflow: hidden;
+        }
+        #arButton {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 12px 24px;
+            background: #007AFF;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            z-index: 999;
+        }
+    </style>
+</head>
 <body>
+    <button id="arButton">进入AR模式</button>
+
 <script type="module">
-    import * as THREE from 'https://cdn.skypack.dev/three@0.136.0';
-    
-    // 创建基础场景
-    const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
-    const renderer = new THREE.WebGLRenderer();
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    document.body.appendChild(renderer.domElement);
-    
-    // 添加一个立方体测试
-    const geometry = new THREE.BoxGeometry();
-    const material = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
-    const cube = new THREE.Mesh(geometry, material);
-    scene.add(cube);
-    camera.position.z = 5;
-    
-    // 动画循环
-    function animate() {
-        requestAnimationFrame(animate);
-        cube.rotation.x += 0.01;
-        cube.rotation.y += 0.01;
-        renderer.render(scene, camera);
+import * as THREE from 'https://cdn.skypack.dev/three@0.136.0';
+import { GLTFLoader } from 'https://cdn.skypack.dev/three@0.136.0/examples/jsm/loaders/GLTFLoader.js';
+
+// 1. 初始化基础场景
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(window.devicePixelRatio);
+document.body.appendChild(renderer.domElement);
+
+// 2. 添加AR功能核心代码
+let currentSession = null;
+
+// 启动AR会话
+async function startAR() {
+    try {
+        // 检查WebXR支持
+        if (!navigator.xr) {
+            throw new Error("浏览器不支持WebXR");
+        }
+
+        // 请求AR会话
+        const session = await navigator.xr.requestSession('immersive-ar', {
+            requiredFeatures: ['local-floor', 'hit-test']
+        });
+        
+        currentSession = session;
+        
+        // 初始化渲染器AR支持
+        await renderer.xr.setSession(session);
+        renderer.xr.enabled = true;
+        
+        // 创建AR相机背景
+        scene.background = new THREE.WebXRManager().getCameraCubeMap(renderer, session);
+        
+        // 添加点击放置功能
+        session.addEventListener('select', placeObject);
+        
+        // 隐藏进入按钮
+        document.getElementById('arButton').style.display = 'none';
+        
+    } catch (error) {
+        alert(`AR启动失败: ${error.message}`);
     }
-    animate();
+}
+
+// 3. 放置物体的交互功能
+let arObject = null;
+
+async function placeObject() {
+    // 加载你的3D模型（示例使用立方体）
+    if (!arObject) {
+        const geometry = new THREE.BoxGeometry(0.3, 0.3, 0.3);
+        const material = new THREE.MeshPhongMaterial({ 
+            color: 0x00ff00,
+            transparent: true,
+            opacity: 0.8
+        });
+        arObject = new THREE.Mesh(geometry, material);
+        scene.add(arObject);
+    }
+    
+    // 获取手机位置信息
+    const [hitResult] = await currentSession.requestHitTest(
+        new XRRay({ x: 0, y: 0, z: 0 }),
+        currentSession.environmentBlendMode === 'opaque' ? 'viewer' : 'local'
+    );
+    
+    if (hitResult) {
+        const pose = hitResult.getPose(renderer.xr.getReferenceSpace());
+        arObject.position.setFromMatrixPosition(pose.transform.matrix);
+    }
+}
+
+// 4. 启动按钮绑定
+document.getElementById('arButton').addEventListener('click', startAR);
+
+// 5. 响应式处理
+window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// 6. 动画循环
+renderer.setAnimationLoop(() => {
+    if (arObject) {
+        arObject.rotation.y += 0.01;
+    }
+    renderer.render(scene, camera);
+});
 </script>
 </body>
 </html>
