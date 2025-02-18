@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>AR名片</title>
+    <title>AR名片修复版</title>
     <meta charset="UTF-8">
     <style>
         body { 
@@ -28,45 +28,50 @@
 
 <script type="module">
 import * as THREE from 'https://cdn.skypack.dev/three@0.136.0';
+import { WebXRManager } from 'https://cdn.skypack.dev/three@0.136.0/src/renderers/webxr/WebXRManager.js';
 import { GLTFLoader } from 'https://cdn.skypack.dev/three@0.136.0/examples/jsm/loaders/GLTFLoader.js';
 
-// 1. 初始化基础场景
+// 初始化场景
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
-const renderer = new THREE.WebGLRenderer({ antialias: true });
+const renderer = new THREE.WebGLRenderer({ 
+    antialias: true,
+    alpha: true // 关键修复：启用透明背景
+});
 renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(window.devicePixelRatio);
+renderer.xr.enabled = true; // 提前启用XR支持
 document.body.appendChild(renderer.domElement);
 
-// 2. 添加AR功能核心代码
+// 添加光源（必须步骤）
+const light = new THREE.AmbientLight(0xffffff, 1);
+scene.add(light);
+
 let currentSession = null;
 
-// 启动AR会话
 async function startAR() {
     try {
-        // 检查WebXR支持
+        // 兼容性检测
         if (!navigator.xr) {
-            throw new Error("浏览器不支持WebXR");
+            alert("请使用最新版Chrome或Safari浏览器");
+            return;
         }
 
         // 请求AR会话
         const session = await navigator.xr.requestSession('immersive-ar', {
-            requiredFeatures: ['local-floor', 'hit-test']
+            requiredFeatures: ['local', 'hit-test']
         });
         
         currentSession = session;
         
-        // 初始化渲染器AR支持
+        // 正确初始化WebXR
+        renderer.xr.setReferenceSpaceType('local');
         await renderer.xr.setSession(session);
-        renderer.xr.enabled = true;
         
-        // 创建AR相机背景
-        scene.background = new THREE.WebXRManager().getCameraCubeMap(renderer, session);
+        // 移除背景设置（自动使用摄像头画面）
         
-        // 添加点击放置功能
+        // 添加点击事件
         session.addEventListener('select', placeObject);
         
-        // 隐藏进入按钮
         document.getElementById('arButton').style.display = 'none';
         
     } catch (error) {
@@ -74,11 +79,10 @@ async function startAR() {
     }
 }
 
-// 3. 放置物体的交互功能
+// 放置物体函数
 let arObject = null;
 
 async function placeObject() {
-    // 加载你的3D模型（示例使用立方体）
     if (!arObject) {
         const geometry = new THREE.BoxGeometry(0.3, 0.3, 0.3);
         const material = new THREE.MeshPhongMaterial({ 
@@ -90,29 +94,32 @@ async function placeObject() {
         scene.add(arObject);
     }
     
-    // 获取手机位置信息
-    const [hitResult] = await currentSession.requestHitTest(
-        new XRRay({ x: 0, y: 0, z: 0 }),
-        currentSession.environmentBlendMode === 'opaque' ? 'viewer' : 'local'
-    );
+    const referenceSpace = renderer.xr.getReferenceSpace();
+    const ray = new XRRay(new DOMPoint(0, 0, 0));
     
-    if (hitResult) {
-        const pose = hitResult.getPose(renderer.xr.getReferenceSpace());
-        arObject.position.setFromMatrixPosition(pose.transform.matrix);
+    const hitTestResults = await session.requestHitTest(ray, referenceSpace);
+    if (hitTestResults.length > 0) {
+        const hit = hitTestResults[0];
+        const pose = hit.getPose(referenceSpace);
+        arObject.position.set(
+            pose.transform.position.x,
+            pose.transform.position.y,
+            pose.transform.position.z
+        );
     }
 }
 
-// 4. 启动按钮绑定
+// 按钮绑定
 document.getElementById('arButton').addEventListener('click', startAR);
 
-// 5. 响应式处理
+// 响应式处理
 window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
-// 6. 动画循环
+// 动画循环
 renderer.setAnimationLoop(() => {
     if (arObject) {
         arObject.rotation.y += 0.01;
