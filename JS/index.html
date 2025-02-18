@@ -1,13 +1,11 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>AR名片修复版</title>
+    <title>商业级AR名片</title>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <style>
-        body { 
-            margin: 0;
-            overflow: hidden;
-        }
+        body { margin: 0; }
         #arButton {
             position: fixed;
             bottom: 20px;
@@ -21,111 +19,129 @@
             cursor: pointer;
             z-index: 999;
         }
+        #debugInfo {
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            color: white;
+            background: rgba(0,0,0,0.5);
+            padding: 8px;
+            border-radius: 4px;
+        }
     </style>
 </head>
 <body>
-    <button id="arButton">进入AR模式</button>
+    <button id="arButton">启动AR名片</button>
+    <div id="debugInfo"></div>
 
 <script type="module">
 import * as THREE from 'https://cdn.skypack.dev/three@0.136.0';
-import { WebXRManager } from 'https://cdn.skypack.dev/three@0.136.0/src/renderers/webxr/WebXRManager.js';
-import { GLTFLoader } from 'https://cdn.skypack.dev/three@0.136.0/examples/jsm/loaders/GLTFLoader.js';
+import { OrbitControls } from 'https://cdn.skypack.dev/three@0.136.0/examples/jsm/controls/OrbitControls.js';
 
-// 初始化场景
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
-const renderer = new THREE.WebGLRenderer({ 
-    antialias: true,
-    alpha: true // 关键修复：启用透明背景
-});
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.xr.enabled = true; // 提前启用XR支持
+renderer.xr.enabled = true;
 document.body.appendChild(renderer.domElement);
 
-// 添加光源（必须步骤）
-const light = new THREE.AmbientLight(0xffffff, 1);
-scene.add(light);
+// 加载模型
+let arObject;
+const loader = new THREE.GLTFLoader();
+loader.load('https://你的模型地址.glb', (gltf) => {
+    arObject = gltf.scene;
+    arObject.scale.set(0.5, 0.5, 0.5);
+    scene.add(arObject);
+});
 
+// AR核心逻辑
 let currentSession = null;
+let isPlaced = false;
 
 async function startAR() {
     try {
-        // 兼容性检测
-        if (!navigator.xr) {
-            alert("请使用最新版Chrome或Safari浏览器");
-            return;
-        }
-
-        // 请求AR会话
-        const session = await navigator.xr.requestSession('immersive-ar', {
-            requiredFeatures: ['local', 'hit-test']
-        });
-        
+        const session = await navigator.xr.requestSession('immersive-ar');
         currentSession = session;
-        
-        // 正确初始化WebXR
-        renderer.xr.setReferenceSpaceType('local');
         await renderer.xr.setSession(session);
-        
-        // 移除背景设置（自动使用摄像头画面）
-        
-        // 添加点击事件
-        session.addEventListener('select', placeObject);
-        
         document.getElementById('arButton').style.display = 'none';
         
-    } catch (error) {
-        alert(`AR启动失败: ${error.message}`);
-    }
-}
-
-// 放置物体函数
-let arObject = null;
-
-async function placeObject() {
-    if (!arObject) {
-        const geometry = new THREE.BoxGeometry(0.3, 0.3, 0.3);
-        const material = new THREE.MeshPhongMaterial({ 
+        // 添加平面检测可视化
+        const planeMaterial = new THREE.MeshBasicMaterial({
             color: 0x00ff00,
             transparent: true,
-            opacity: 0.8
+            opacity: 0.3
         });
-        arObject = new THREE.Mesh(geometry, material);
-        scene.add(arObject);
-    }
-    
-    const referenceSpace = renderer.xr.getReferenceSpace();
-    const ray = new XRRay(new DOMPoint(0, 0, 0));
-    
-    const hitTestResults = await session.requestHitTest(ray, referenceSpace);
-    if (hitTestResults.length > 0) {
-        const hit = hitTestResults[0];
-        const pose = hit.getPose(referenceSpace);
-        arObject.position.set(
-            pose.transform.position.x,
-            pose.transform.position.y,
-            pose.transform.position.z
-        );
+        const planeGeometry = new THREE.PlaneGeometry(2, 2);
+        const planeMesh = new THREE.Mesh(planeGeometry, planeMaterial);
+        planeMesh.rotation.x = -Math.PI / 2;
+        scene.add(planeMesh);
+
+        // 手势交互
+        let touchStartDistance = 0;
+        let initialScale = 1;
+        
+        window.addEventListener('touchstart', (e) => {
+            if (e.touches.length === 2) {
+                touchStartDistance = Math.hypot(
+                    e.touches[0].clientX - e.touches[1].clientX,
+                    e.touches[0].clientY - e.touches[1].clientY
+                );
+                initialScale = arObject.scale.x;
+            }
+        });
+
+        window.addEventListener('touchmove', (e) => {
+            if (e.touches.length === 2 && arObject) {
+                const currentDistance = Math.hypot(
+                    e.touches[0].clientX - e.touches[1].clientX,
+                    e.touches[0].clientY - e.touches[1].clientY
+                );
+                const scaleFactor = currentDistance / touchStartDistance;
+                arObject.scale.setScalar(initialScale * scaleFactor);
+            }
+        });
+
+        // 陀螺仪控制
+        let beta = 0;
+        window.addEventListener('deviceorientation', (e) => {
+            beta = e.beta * (Math.PI/180); // 转换为弧度
+        });
+
+        // 放置逻辑
+        session.addEventListener('select', async () => {
+            const hitTest = await session.requestHitTest(
+                new XRRay(new DOMPoint(0, 0, 0)),
+                session.renderState.baseLayer
+            );
+            
+            if (hitTest.length > 0) {
+                const pose = hitTest[0].getPose(renderer.xr.getReferenceSpace());
+                arObject.position.set(
+                    pose.transform.position.x,
+                    pose.transform.position.y,
+                    pose.transform.position.z
+                );
+                isPlaced = true;
+                scene.remove(planeMesh); // 移除平面提示
+            }
+        });
+    } catch (e) {
+        alert(`AR启动失败: ${e.message}`);
     }
 }
-
-// 按钮绑定
-document.getElementById('arButton').addEventListener('click', startAR);
-
-// 响应式处理
-window.addEventListener('resize', () => {
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
-});
 
 // 动画循环
 renderer.setAnimationLoop(() => {
-    if (arObject) {
-        arObject.rotation.y += 0.01;
+    if (arObject && isPlaced) {
+        arObject.rotation.y += 0.01; // 保持自动旋转
+        if (beta) {
+            arObject.rotation.x = beta; // 陀螺仪控制X轴旋转
+        }
     }
     renderer.render(scene, camera);
 });
+
+document.getElementById('arButton').addEventListener('click', startAR);
 </script>
 </body>
 </html>
